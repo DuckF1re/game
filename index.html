@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reaction Time Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        #gameArea {
+            background: #f5f5f5;
+            border-radius: 15px;
+            padding: 60px 20px;
+            margin-bottom: 30px;
+            text-align: center;
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        #gameArea.waiting {
+            background: #ffd700;
+        }
+        
+        #gameArea.ready {
+            background: #00ff00;
+        }
+        
+        #gameArea.early {
+            background: #ff4444;
+        }
+        
+        #message {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        #result {
+            font-size: 48px;
+            font-weight: bold;
+            color: #667eea;
+            margin-top: 10px;
+        }
+        
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 18px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: bold;
+        }
+        
+        .btn:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+        }
+        
+        .leaderboard {
+            margin-top: 30px;
+        }
+        
+        .leaderboard h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+        
+        .score-item {
+            background: #f9f9f9;
+            padding: 12px 15px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .score-rank {
+            font-weight: bold;
+            color: #667eea;
+            min-width: 30px;
+        }
+        
+        .score-time {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #666;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚡ Reaction Time Game ⚡</h1>
+        <p class="subtitle">Jak rychlé máš reflexy?</p>
+        
+        <div id="gameArea">
+            <div id="message">Klikni na "START" pro začátek!</div>
+            <div id="result"></div>
+            <button class="btn" id="startBtn">START</button>
+        </div>
+        
+        <div class="leaderboard">
+            <h2>🏆 Top 10 Nejrychlejších Časů</h2>
+            <div id="leaderboardList"><div class="loading">Načítám žebříček...</div></div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // 🔧 VYPLŇ TYTO 3 VĚCI:
+        // ============================================
+        const GITHUB_USERNAME = 'DuckF1re';  // Např. 'jannovak123'
+        const GITHUB_REPO = 'game';        // Např. 'reaction-game'
+        const GITHUB_TOKEN = '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';             // Ten token co jsi vytvořil
+        // ============================================
+
+        const SCORES_FILE = 'scores.json';
+        let startTime;
+        let timeout;
+        let gameActive = false;
+        let currentSHA = null; // Pro update souboru na GitHubu
+        
+        const gameArea = document.getElementById('gameArea');
+        const message = document.getElementById('message');
+        const result = document.getElementById('result');
+        const startBtn = document.getElementById('startBtn');
+        
+        // GitHub API URLs
+        const API_URL = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${SCORES_FILE}`;
+        
+        // Načtení skóre z GitHubu
+        async function getScores() {
+            try {
+                const response = await fetch(API_URL, {
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    currentSHA = data.sha; // Uložit SHA pro pozdější update
+                    const content = atob(data.content); // Dekódovat z base64
+                    return JSON.parse(content);
+                } else if (response.status === 404) {
+                    // Soubor ještě neexistuje
+                    return [];
+                } else {
+                    console.error('Chyba při načítání:', response.status);
+                    return [];
+                }
+            } catch (error) {
+                console.error('Chyba:', error);
+                return [];
+            }
+        }
+        
+        // Uložení skóre na GitHub
+        async function saveScore(time) {
+            try {
+                // Načíst aktuální skóre
+                let scores = await getScores();
+                
+                // Přidat nové skóre
+                scores.push(time);
+                scores.sort((a, b) => a - b); // Seřadit od nejmenšího
+                scores = scores.slice(0, 10); // Ponechat top 10
+                
+                // Převést na JSON a zakódovat do base64
+                const content = btoa(JSON.stringify(scores, null, 2));
+                
+                // Připravit data pro GitHub
+                const body = {
+                    message: `Aktualizace skóre: ${time}ms`,
+                    content: content
+                };
+                
+                // Pokud soubor existuje, musíme přidat SHA
+                if (currentSHA) {
+                    body.sha = currentSHA;
+                }
+                
+                // Odeslat na GitHub
+                const response = await fetch(API_URL, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(body)
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    currentSHA = data.content.sha; // Aktualizovat SHA
+                    await displayLeaderboard(); // Obnovit žebříček
+                } else {
+                    console.error('Chyba při ukládání:', response.status);
+                    alert('Nepodařilo se uložit skóre. Zkontroluj nastavení!');
+                }
+            } catch (error) {
+                console.error('Chyba:', error);
+                alert('Nepodařilo se uložit skóre. Zkontroluj připojení!');
+            }
+        }
+        
+        // Zobrazení žebříčku
+        async function displayLeaderboard() {
+            const scores = await getScores();
+            const leaderboardList = document.getElementById('leaderboardList');
+            
+            if (scores.length === 0) {
+                leaderboardList.innerHTML = '<div class="score-item">Zatím žádná skóre. Buď první!</div>';
+                return;
+            }
+            
+            const medals = ['🥇', '🥈', '🥉'];
+            leaderboardList.innerHTML = scores.map((score, index) => `
+                <div class="score-item">
+                    <span class="score-rank">${index < 3 ? medals[index] : `${index + 1}.`}</span>
+                    <span class="score-time">${score} ms</span>
+                </div>
+            `).join('');
+        }
+        
+        // Start hry
+        function startGame() {
+            gameActive = true;
+            startBtn.style.display = 'none';
+            message.textContent = 'Počkej na zelený kruh...';
+            result.textContent = '';
+            gameArea.className = '';
+            gameArea.classList.add('waiting');
+            
+            // Náhodná prodleva 1-5 sekund
+            const delay = Math.random() * 4000 + 1000;
+            
+            timeout = setTimeout(() => {
+                gameArea.classList.remove('waiting');
+                gameArea.classList.add('ready');
+                message.textContent = 'KLIKNI TEĎ!';
+                startTime = Date.now();
+            }, delay);
+        }
+        
+        // Kliknutí na herní plochu
+        gameArea.addEventListener('click', () => {
+            if (!gameActive) return;
+            
+            // Pokud ještě není zelená (klikl moc brzy)
+            if (!gameArea.classList.contains('ready')) {
+                clearTimeout(timeout);
+                gameArea.className = '';
+                gameArea.classList.add('early');
+                message.textContent = 'Moc brzy! 😅';
+                result.textContent = 'Zkus znovu';
+                startBtn.style.display = 'block';
+                startBtn.textContent = 'ZKUSIT ZNOVU';
+                gameActive = false;
+                return;
+            }
+            
+            // Vypočítat reakční čas
+            const reactionTime = Date.now() - startTime;
+            gameArea.className = '';
+            message.textContent = 'Tvůj čas:';
+            result.textContent = `${reactionTime} ms`;
+            
+            // Uložit skóre na GitHub
+            saveScore(reactionTime);
+            
+            startBtn.style.display = 'block';
+            startBtn.textContent = 'HRÁT ZNOVU';
+            gameActive = false;
+        });
+        
+        // Start tlačítko
+        startBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            startGame();
+        });
+        
+        // Načíst žebříček při startu
+        displayLeaderboard();
+    </script>
+</body>
+</html>
